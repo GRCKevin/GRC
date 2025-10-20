@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Santa Cruz Branch Rail Line Trip Calculator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      line-height: 1.4;
+    }
+    h1 {
+      margin-bottom: 0.5em;
+    }
+    form label {
+      display: block;
+      margin-top: 1em;
+    }
+    input[type="text"], select {
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      box-sizing: border-box;
+    }
+    button {
+      margin-top: 1.5em;
+      padding: 8px 16px;
+      font-size: 1em;
+    }
+    .results {
+      margin-top: 2em;
+      padding: 1em;
+      background: #f7f7f7;
+      border-radius: 4px;
+    }
+    .results h2 {
+      margin-top: 0;
+    }
+    small {
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>Santa Cruz Branch Rail Line Trip Calculator</h1>
+  <p>
+    Select your starting and ending stations, and optionally enter your origin and
+    destination addresses for first‑/last‑mile estimates. This calculator
+    estimates travel times along the Santa Cruz Branch Rail Line using
+    approximate station coordinates and assumes walking at 3 mph for first and
+    last mile. Rail times are scaled from a full‐route current time of 73 minutes
+    and a best‑case time of 45 minutes.
+  </p>
+  <form id="tripForm">
+    <label>
+      Starting station:
+      <select id="startStation">
+        <!-- options populated by script -->
+      </select>
+    </label>
+    <label>
+      Ending station:
+      <select id="endStation">
+        <!-- options populated by script -->
+      </select>
+    </label>
+    <label>
+      Your starting address (optional):
+      <input
+        type="text"
+        id="origin"
+        placeholder="e.g. 123 Main St, Watsonville, CA"
+      />
+    </label>
+    <label>
+      Your destination address (optional):
+      <input
+        type="text"
+        id="destination"
+        placeholder="e.g. 700 Ocean St, Santa Cruz, CA"
+      />
+    </label>
+    <button type="submit">Calculate</button>
+  </form>
+  <div class="results" id="results" style="display: none;"></div>
+  <script>
+    /*
+     * Branch rail line trip calculator.
+     *
+     * Stations are defined below with approximate latitude and longitude. The
+     * order array defines the sequence along the rail line. The calculator
+     * computes the distance between stations, then scales travel time based on
+     * total route length for current (73 min) and best‑case (45 min) runs.
+     *
+     * Optionally, users may enter a street address for start and end points. A
+     * simple geocoding function uses the public Nominatim API to find
+     * coordinates. If geocoding fails, first‑/last‑mile information is omitted.
+     */
+    const stations = [
+      {
+        id: 1,
+        name: "Pajaro",
+        address: "422 Salinas Rd, Pajaro, CA 95076",
+        lat: 36.899,
+        lon: -121.754,
+      },
+      {
+        id: 2,
+        name: "Watsonville Downtown",
+        address: "241 Walker St, Watsonville, CA 95076",
+        lat: 36.910,
+        lon: -121.757,
+      },
+      {
+        id: 3,
+        name: "Aptos Station",
+        address: "8017 Soquel Dr, Aptos, CA 95003",
+        lat: 36.978,
+        lon: -121.904,
+      },
+      {
+        id: 4,
+        name: "New Brighton/Cabrillo Station",
+        address: "300 New Brighton Rd, Aptos, CA 95003",
+        lat: 36.988,
+        lon: -121.933,
+      },
+      {
+        id: 5,
+        name: "Capitola Station",
+        address: "200 Park Ave, Capitola, CA 95010",
+        lat: 36.973,
+        lon: -121.952,
+      },
+      {
+        id: 6,
+        name: "17th Ave Station",
+        address: "1135 17th Ave, Santa Cruz, CA 95062",
+        lat: 36.972,
+        lon: -121.987,
+      },
+      {
+        id: 7,
+        name: "Seabright Station",
+        address: "519 Seabright Ave, Santa Cruz, CA 95062",
+        lat: 36.967,
+        lon: -122.010,
+      },
+      {
+        id: 8,
+        name: "Beach Street Station (SC Wharf, Depot Park, Boardwalk)",
+        address: "35 Pacific Ave, Santa Cruz, CA 95060",
+        lat: 36.964,
+        lon: -122.023,
+      },
+      {
+        id: 9,
+        name: "Natural Bridges Station",
+        address: "300 Natural Bridges Dr #300, Santa Cruz, CA 95060",
+        lat: 36.957,
+        lon: -122.058,
+      },
+    ];
+    // Order of stations along the line (1 = southernmost / Pajaro)
+    const order = stations.map((s) => s.name);
+
+    const currentFullRunMinutes = 73;
+    const bestFullRunMinutes = 45;
+    const walkingSpeed = 3; // mph
+
+    // Convert degrees to radians
+    function toRad(deg) {
+      return (deg * Math.PI) / 180;
+    }
+
+    // Haversine distance in miles
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 3958.8;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) *
+          Math.cos(toRad(lat2)) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    // Build drop-down options
+    const startSelect = document.getElementById("startStation");
+    const endSelect = document.getElementById("endStation");
+    stations.forEach((s) => {
+      const opt1 = document.createElement("option");
+      opt1.value = s.name;
+      opt1.textContent = `${s.id}. ${s.name}`;
+      startSelect.appendChild(opt1);
+      const opt2 = opt1.cloneNode(true);
+      endSelect.appendChild(opt2);
+    });
+    // Default end station to last
+    endSelect.value = stations[stations.length - 1].name;
+
+    // Compute total track distance once
+    function totalRouteDistance() {
+      let total = 0;
+      for (let i = 0; i < order.length - 1; i++) {
+        const s1 = stations.find((s) => s.name === order[i]);
+        const s2 = stations.find((s) => s.name === order[i + 1]);
+        total += haversine(s1.lat, s1.lon, s2.lat, s2.lon);
+      }
+      return total;
+    }
+    const totalDistance = totalRouteDistance();
+
+    // Return distance along route between two stations (in miles)
+    function distanceBetweenStations(startName, endName) {
+      const startIndex = order.indexOf(startName);
+      const endIndex = order.indexOf(endName);
+      if (startIndex === -1 || endIndex === -1) return 0;
+      let dist = 0;
+      const step = startIndex < endIndex ? 1 : -1;
+      for (let i = startIndex; i !== endIndex; i += step) {
+        const s1 = stations.find((s) => s.name === order[i]);
+        const s2 = stations.find((s) => s.name === order[i + step]);
+        dist += haversine(s1.lat, s1.lon, s2.lat, s2.lon);
+      }
+      return dist;
+    }
+
+    // Geocode address via Nominatim
+    async function geocode(address) {
+      const url =
+        "https://nominatim.openstreetmap.org/search?format=json&q=" +
+        encodeURIComponent(address);
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "SCBRL-trip-calculator/1.0 (example@example.com)",
+        },
+      });
+      if (!res.ok) throw new Error("Geocoding failed");
+      const data = await res.json();
+      if (!data || data.length === 0) throw new Error("Address not found");
+      return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+    }
+
+    // Compute first/last mile distance/time (returns promise)
+    async function computeFirstLastMiles(addrStart, addrEnd, startStation, endStation) {
+      const results = { firstDistance: null, firstTime: null, lastDistance: null, lastTime: null };
+      try {
+        if (addrStart) {
+          const geocoded = await geocode(addrStart);
+          const d1 = haversine(geocoded.lat, geocoded.lon, startStation.lat, startStation.lon);
+          results.firstDistance = d1;
+          results.firstTime = (d1 / walkingSpeed) * 60;
+        }
+      } catch (err) {
+        console.warn("Start geocode error", err);
+      }
+      try {
+        if (addrEnd) {
+          const geocoded = await geocode(addrEnd);
+          const d2 = haversine(geocoded.lat, geocoded.lon, endStation.lat, endStation.lon);
+          results.lastDistance = d2;
+          results.lastTime = (d2 / walkingSpeed) * 60;
+        }
+      } catch (err) {
+        console.warn("End geocode error", err);
+      }
+      return results;
+    }
+
+    // Main form submission handler
+    document.getElementById("tripForm").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const startName = startSelect.value;
+      const endName = endSelect.value;
+      if (startName === endName) {
+        alert("Please choose different start and end stations.");
+        return;
+      }
+      const startStation = stations.find((s) => s.name === startName);
+      const endStation = stations.find((s) => s.name === endName);
+      const segmentDistance = distanceBetweenStations(startName, endName);
+      // Compute rail times
+      const fraction = segmentDistance / totalDistance;
+      const currentRailTime = currentFullRunMinutes * fraction;
+      const bestRailTime = bestFullRunMinutes * fraction;
+      // Optional first/last mile geocoding
+      const addrStart = document.getElementById("origin").value.trim();
+      const addrEnd = document.getElementById("destination").value.trim();
+      const fmLm = await computeFirstLastMiles(
+        addrStart || null,
+        addrEnd || null,
+        startStation,
+        endStation
+      );
+      // Prepare results display
+      const resDiv = document.getElementById("results");
+      let html = "";
+      html += `<h2>Trip summary</h2>`;
+      html += `<p><strong>Stations:</strong> ${startStation.name} → ${endStation.name}</p>`;
+      html += `<p><strong>Segment distance:</strong> ${segmentDistance.toFixed(2)} miles (of ${totalDistance.toFixed(
+        2
+      )}‐mile route)</p>`;
+      html += `<p><strong>Rail time:</strong> ${currentRailTime.toFixed(
+        1
+      )} min (current) / ${bestRailTime.toFixed(1)} min (best case)</p>`;
+      if (fmLm.firstDistance != null) {
+        html += `<p><strong>First mile:</strong> ${fmLm.firstDistance.toFixed(
+          2
+        )} mi, ${fmLm.firstTime.toFixed(1)} min to ${startStation.name}</p>`;
+      }
+      if (fmLm.lastDistance != null) {
+        html += `<p><strong>Last mile:</strong> ${fmLm.lastDistance.toFixed(
+          2
+        )} mi, ${fmLm.lastTime.toFixed(1)} min from ${endStation.name}</p>`;
+      }
+      // Total times if first/last mile present
+      if (fmLm.firstTime != null || fmLm.lastTime != null) {
+        const totalCurrent =
+          (fmLm.firstTime || 0) + currentRailTime + (fmLm.lastTime || 0);
+        const totalBest = (fmLm.firstTime || 0) + bestRailTime + (fmLm.lastTime || 0);
+        html += `<p><strong>Total time:</strong> ${totalCurrent.toFixed(
+          1
+        )} min (current) / ${totalBest.toFixed(1)} min (best case)</p>`;
+      }
+      html += `<small>Note: coordinates are approximate; times assume straight‑line distances and average speeds. Rail times scaled from full‑route (Station 1 to 9) durations of ${currentFullRunMinutes} min (current) and ${bestFullRunMinutes} min (best case).</small>`;
+      resDiv.innerHTML = html;
+      resDiv.style.display = "block";
+    });
+  </script>
+</body>
+</html>
